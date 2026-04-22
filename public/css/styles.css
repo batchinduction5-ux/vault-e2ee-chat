@@ -235,6 +235,21 @@ input,button{font-family:inherit;font-size:inherit}
 }
 .no-users span{font-size:12px;opacity:.65}
 
+/* sidebar footer / logout */
+.sidebar-footer{
+  padding:12px 14px;border-top:1px solid var(--border);
+  flex-shrink:0;
+}
+.logout-btn{
+  width:100%;padding:9px 14px;
+  background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.15);
+  border-radius:var(--radius-sm);color:var(--red);
+  font-size:13px;font-weight:500;cursor:pointer;
+  display:flex;align-items:center;gap:8px;
+  transition:background var(--transition);
+}
+.logout-btn:hover{background:rgba(248,113,113,.15)}
+
 /* unread badge */
 .unread-badge{
   min-width:20px;height:20px;border-radius:10px;

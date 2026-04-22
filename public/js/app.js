@@ -64,9 +64,17 @@
   attachBtn.addEventListener('click', () => { if (activeChat) fileInput.click(); });
   fileInput.addEventListener('change', onFileSelected);
 
+  // ═══ AUTO-LOGIN ════════════════════════════════════════════════
+  const savedUser = localStorage.getItem('vault_username');
+  if (savedUser && VaultCrypto.loadKeyPair(savedUser)) {
+    usernameInput.value = savedUser;
+    loginBtn.disabled = false;
+    doLogin();
+  }
+
   // ═══ LOGIN ═════════════════════════════════════════════════════
   async function doLogin() {
-    const username = usernameInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const username = (usernameInput.value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
     if (!username) return;
 
     loginBtn.disabled = true;
@@ -101,6 +109,7 @@
 
       myUsername = username;
       contacts = res.contacts || [];
+      localStorage.setItem('vault_username', username);
       bindSocketEvents();
 
       loginView.classList.remove('active');
@@ -496,4 +505,18 @@
   }
   function showError(msg) { loginError.textContent = msg; loginError.hidden = false; }
   function hideError() { loginError.hidden = true; }
+
+  // ═══ LOGOUT ════════════════════════════════════════════════════
+  window._vaultLogout = function () {
+    localStorage.removeItem('vault_username');
+    if (socket) { socket.disconnect(); socket = null; }
+    myUsername = null; myKeyPair = null; myPublicJwk = null;
+    activeChat = null; sharedKeys = {}; contacts = [];
+    chatMessages = {}; unreadCounts = {};
+    chatView.classList.remove('active');
+    loginView.classList.add('active');
+    usernameInput.value = '';
+    loginBtn.querySelector('.btn-text').textContent = 'Connect Securely';
+    loginBtn.disabled = true;
+  };
 })();
