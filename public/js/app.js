@@ -6,18 +6,21 @@
 (async function () {
   'use strict';
 
+  const MEDIA_PREFIX = '__VAULT_MEDIA__';
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+
   // ── State ──────────────────────────────────────────────────────
-  let socket        = null;
-  let myUsername     = null;
-  let myKeyPair     = null;          // { publicKey, privateKey } CryptoKey
-  let myPublicJwk   = null;
-  let activeChat     = null;          // username of current chat partner
-  let sharedKeys     = {};            // username → AES CryptoKey (cache)
-  let contacts       = [];            // [{ username, publicKey (JWK), online }]
-  let chatMessages   = {};            // username → [{ from, text, timestamp }]
-  let unreadCounts   = {};            // username → number
-  let typingTimers   = {};            // incoming typing timeout ids
-  let myTypingTimer  = null;          // outgoing typing debounce
+  let socket         = null;
+  let myUsername      = null;
+  let myKeyPair      = null;
+  let myPublicJwk    = null;
+  let activeChat     = null;
+  let sharedKeys     = {};
+  let contacts       = [];
+  let chatMessages   = {};
+  let unreadCounts   = {};
+  let typingTimers   = {};
+  let myTypingTimer  = null;
   let isSendingTyping = false;
 
   // ── DOM refs ───────────────────────────────────────────────────
@@ -36,12 +39,13 @@
   const chatAvatar    = $('#chat-avatar');
   const chatName      = $('#chat-name');
   const chatStatus    = $('#chat-status');
-  const encBadge      = $('#enc-badge');
   const messagesEl    = $('#messages');
   const typingInd     = $('#typing-indicator');
   const typingLabel   = $('#typing-label');
   const msgInput      = $('#message-input');
   const sendBtn       = $('#send-btn');
+  const attachBtn     = $('#attach-btn');
+  const fileInput     = $('#file-input');
 
   // ═══ INIT ══════════════════════════════════════════════════════
   usernameInput.addEventListener('input', () => {
@@ -57,6 +61,8 @@
   });
   sendBtn.addEventListener('click', doSend);
   userSearch.addEventListener('input', renderContacts);
+  attachBtn.addEventListener('click', () => { if (activeChat) fileInput.click(); });
+  fileInput.addEventListener('change', onFileSelected);
 
   // ═══ LOGIN ═════════════════════════════════════════════════════
   async function doLogin() {
@@ -68,7 +74,6 @@
     hideError();
 
     try {
-      // 1. Load or generate ECDH key pair
       const stored = VaultCrypto.loadKeyPair(username);
       if (stored) {
         myKeyPair = {
@@ -83,35 +88,25 @@
         VaultCrypto.storeKeyPair(username, myPublicJwk, privJwk);
       }
 
-      // 2. Connect socket
       socket = io({ transports: ['websocket', 'polling'] });
 
       await new Promise((resolve, reject) => {
         socket.on('connect', resolve);
-        socket.on('connect_error', (err) => reject(new Error('Connection failed')));
+        socket.on('connect_error', () => reject(new Error('Connection failed')));
         setTimeout(() => reject(new Error('Connection timeout')), 8000);
       });
 
-      // 3. Register with server
-      const res = await emitAsync('register', {
-        username,
-        publicKey: myPublicJwk,
-      });
-
+      const res = await emitAsync('register', { username, publicKey: myPublicJwk });
       if (res.error) throw new Error(res.error);
 
       myUsername = username;
       contacts = res.contacts || [];
-
-      // 4. Bind socket events
       bindSocketEvents();
 
-      // 5. Switch to chat view
       loginView.classList.remove('active');
       chatView.classList.add('active');
       myBadge.textContent = `@${myUsername}`;
       renderContacts();
-
     } catch (err) {
       showError(err.message);
       loginBtn.querySelector('.btn-text').textContent = 'Connect Securely';
@@ -127,11 +122,8 @@
       if (c) {
         c.online = online;
       } else if (username !== myUsername) {
-        // New user registered — fetch their public key
         socket.emit('get-public-key', { username }, (res) => {
-          if (res.publicKey) {
-            contacts.push({ username, publicKey: res.publicKey, online });
-          }
+          if (res.publicKey) contacts.push({ username, publicKey: res.publicKey, online });
           renderContacts();
         });
         return;
@@ -149,17 +141,14 @@
     socket.on('encrypted-message', async (msg) => {
       try {
         const key = await getSharedKey(msg.from);
-        const text = await VaultCrypto.decrypt(key, msg.ciphertext, msg.iv);
+        const raw = await VaultCrypto.decrypt(key, msg.ciphertext, msg.iv);
+        const parsed = parseMessage(raw);
 
         if (!chatMessages[msg.from]) chatMessages[msg.from] = [];
-        chatMessages[msg.from].push({
-          from: msg.from,
-          text,
-          timestamp: msg.timestamp,
-        });
+        chatMessages[msg.from].push({ from: msg.from, ...parsed, timestamp: msg.timestamp });
 
         if (activeChat === msg.from) {
-          appendMessage(msg.from, text, msg.timestamp, false);
+          appendMessageEl({ from: msg.from, ...parsed, timestamp: msg.timestamp });
           scrollToBottom();
         } else {
           unreadCounts[msg.from] = (unreadCounts[msg.from] || 0) + 1;
@@ -179,13 +168,30 @@
     });
   }
 
+  // ═══ MESSAGE PARSING ═══════════════════════════════════════════
+  function parseMessage(raw) {
+    if (raw.startsWith(MEDIA_PREFIX)) {
+      try {
+        const json = JSON.parse(raw.slice(MEDIA_PREFIX.length));
+        return { type: 'media', name: json.name, mime: json.mime, data: json.data, size: json.size };
+      } catch { return { type: 'text', text: '[corrupt media]' }; }
+    }
+    return { type: 'text', text: raw };
+  }
+
+  function buildPayload(msgObj) {
+    if (msgObj.type === 'media') {
+      return MEDIA_PREFIX + JSON.stringify({ name: msgObj.name, mime: msgObj.mime, data: msgObj.data, size: msgObj.size });
+    }
+    return msgObj.text;
+  }
+
   // ═══ CONTACTS LIST ═════════════════════════════════════════════
   function renderContacts() {
     const query = userSearch.value.toLowerCase();
     const filtered = contacts
       .filter(c => c.username.includes(query))
       .sort((a, b) => {
-        // Online first, then alphabetical
         if (a.online !== b.online) return a.online ? -1 : 1;
         return a.username.localeCompare(b.username);
       });
@@ -199,9 +205,11 @@
       if (c.username === activeChat) li.classList.add('active');
 
       const lastMsg = chatMessages[c.username]?.slice(-1)[0];
-      const preview = lastMsg
-        ? (lastMsg.from === myUsername ? 'You: ' : '') + truncate(lastMsg.text, 28)
-        : 'No messages yet';
+      let preview = 'No messages yet';
+      if (lastMsg) {
+        const prefix = lastMsg.from === myUsername ? 'You: ' : '';
+        preview = lastMsg.type === 'media' ? prefix + '📎 ' + lastMsg.name : prefix + truncate(lastMsg.text, 28);
+      }
       const unread = unreadCounts[c.username] || 0;
 
       li.innerHTML = `
@@ -225,7 +233,6 @@
     activeChat = username;
     unreadCounts[username] = 0;
 
-    // UI
     emptyState.style.display = 'none';
     activeEl.hidden = false;
     messagesEl.innerHTML = '';
@@ -234,36 +241,20 @@
     renderContacts();
     msgInput.focus();
 
-    // Derive shared key (cached)
-    try {
-      await getSharedKey(username);
-    } catch (err) {
-      console.error('Key derivation failed:', err);
-      return;
-    }
+    try { await getSharedKey(username); }
+    catch (err) { console.error('Key derivation failed:', err); return; }
 
-    // Load encrypted history from server
     const res = await emitAsync('load-history', { withUser: username });
-    const history = res.messages || [];
-
-    // Decrypt and display
     chatMessages[username] = [];
     const key = sharedKeys[username];
 
-    for (const msg of history) {
+    for (const msg of (res.messages || [])) {
       try {
-        const text = await VaultCrypto.decrypt(key, msg.ciphertext, msg.iv);
-        chatMessages[username].push({
-          from: msg.from,
-          text,
-          timestamp: msg.timestamp,
-        });
+        const raw = await VaultCrypto.decrypt(key, msg.ciphertext, msg.iv);
+        const parsed = parseMessage(raw);
+        chatMessages[username].push({ from: msg.from, ...parsed, timestamp: msg.timestamp });
       } catch {
-        chatMessages[username].push({
-          from: msg.from,
-          text: '⚠️ Unable to decrypt (key mismatch)',
-          timestamp: msg.timestamp,
-        });
+        chatMessages[username].push({ from: msg.from, type: 'text', text: '⚠️ Unable to decrypt', timestamp: msg.timestamp });
       }
     }
 
@@ -295,28 +286,83 @@
         sep.textContent = formatDate(m.timestamp);
         messagesEl.appendChild(sep);
       }
-      appendMessage(m.from, m.text, m.timestamp, m.from === myUsername);
+      appendMessageEl(m);
     });
   }
 
-  function appendMessage(from, text, timestamp, sent) {
-    const isMine = from === myUsername;
+  function appendMessageEl(m) {
+    const isMine = m.from === myUsername;
     const div = document.createElement('div');
     div.className = `msg ${isMine ? 'sent' : 'received'}`;
-    div.innerHTML = `
-      <span class="msg-text">${esc(text)}</span>
-      <span class="msg-time">${formatTime(timestamp)}</span>
-    `;
+
+    if (m.type === 'media') {
+      div.innerHTML = renderMediaContent(m) +
+        `<span class="msg-time">${formatTime(m.timestamp)}</span>`;
+    } else {
+      div.innerHTML = `<span class="msg-text">${esc(m.text)}</span>
+        <span class="msg-time">${formatTime(m.timestamp)}</span>`;
+    }
+
     messagesEl.appendChild(div);
   }
 
-  function scrollToBottom() {
-    requestAnimationFrame(() => {
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    });
+  function renderMediaContent(m) {
+    const sizeStr = formatFileSize(m.size || 0);
+    if (m.mime && m.mime.startsWith('image/')) {
+      return `<div class="msg-media"><img src="data:${m.mime};base64,${m.data}" alt="${esc(m.name)}" onclick="window._vaultPreview(this.src,'img')"></div>
+        <span class="msg-text" style="font-size:12px;opacity:.7">📷 ${esc(m.name)} (${sizeStr})</span>`;
+    }
+    if (m.mime && m.mime.startsWith('video/')) {
+      return `<div class="msg-media"><video src="data:${m.mime};base64,${m.data}" controls></video></div>
+        <span class="msg-text" style="font-size:12px;opacity:.7">🎬 ${esc(m.name)} (${sizeStr})</span>`;
+    }
+    if (m.mime && m.mime.startsWith('audio/')) {
+      return `<div class="msg-media"><audio src="data:${m.mime};base64,${m.data}" controls style="width:100%"></audio></div>
+        <span class="msg-text" style="font-size:12px;opacity:.7">🎵 ${esc(m.name)} (${sizeStr})</span>`;
+    }
+    // Generic file
+    return `<div class="msg-file" onclick="window._vaultDownload('${btoa(m.name)}','${m.mime}','${m.data.slice(0, 50)}')">
+      <span class="msg-file-icon">📄</span>
+      <div class="msg-file-info">
+        <span class="msg-file-name">${esc(m.name)}</span>
+        <span class="msg-file-size">${sizeStr}</span>
+      </div></div>`;
   }
 
-  // ═══ SEND MESSAGE ══════════════════════════════════════════════
+  // Global helpers for inline event handlers
+  window._vaultPreview = function (src, type) {
+    const overlay = document.createElement('div');
+    overlay.className = 'file-preview-overlay';
+    overlay.innerHTML = type === 'img' ? `<img src="${src}">` : `<video src="${src}" controls autoplay>`;
+    overlay.addEventListener('click', () => overlay.remove());
+    document.body.appendChild(overlay);
+  };
+
+  window._vaultDownload = function (nameB64) {
+    // Find the message data and trigger download
+    const name = atob(nameB64);
+    const msgs = chatMessages[activeChat] || [];
+    const m = msgs.find(x => x.type === 'media' && x.name === name);
+    if (!m) return;
+    const blob = base64ToBlob(m.data, m.mime);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = m.name; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  function base64ToBlob(b64, mime) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+
+  function scrollToBottom() {
+    requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
+  }
+
+  // ═══ SEND TEXT MESSAGE ═════════════════════════════════════════
   async function doSend() {
     const text = msgInput.value.trim();
     if (!text || !activeChat) return;
@@ -326,32 +372,60 @@
     emitStopTyping();
 
     try {
+      const msgObj = { type: 'text', text };
+      const payload = buildPayload(msgObj);
       const key = await getSharedKey(activeChat);
-      const { ciphertext, iv } = await VaultCrypto.encrypt(key, text);
+      const { ciphertext, iv } = await VaultCrypto.encrypt(key, payload);
 
-      socket.emit('encrypted-message', {
-        to: activeChat,
-        ciphertext,
-        iv,
-      });
+      socket.emit('encrypted-message', { to: activeChat, ciphertext, iv });
 
-      // Store locally
       const ts = Date.now();
       if (!chatMessages[activeChat]) chatMessages[activeChat] = [];
-      chatMessages[activeChat].push({ from: myUsername, text, timestamp: ts });
-
-      appendMessage(myUsername, text, ts, true);
+      chatMessages[activeChat].push({ from: myUsername, ...msgObj, timestamp: ts });
+      appendMessageEl({ from: myUsername, ...msgObj, timestamp: ts });
       scrollToBottom();
       renderContacts();
-    } catch (err) {
-      console.error('Send failed:', err);
-    }
+    } catch (err) { console.error('Send failed:', err); }
 
     sendBtn.disabled = false;
     msgInput.focus();
   }
 
-  // ═══ TYPING INDICATORS ════════════════════════════════════════
+  // ═══ SEND MEDIA FILE ══════════════════════════════════════════
+  async function onFileSelected() {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (!file || !activeChat) return;
+
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`File too large. Maximum size is ${formatFileSize(MAX_FILE_SIZE)}.`);
+      return;
+    }
+
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const b64data = btoa(binary);
+
+      const msgObj = { type: 'media', name: file.name, mime: file.type || 'application/octet-stream', data: b64data, size: file.size };
+      const payload = buildPayload(msgObj);
+      const key = await getSharedKey(activeChat);
+      const { ciphertext, iv } = await VaultCrypto.encrypt(key, payload);
+
+      socket.emit('encrypted-message', { to: activeChat, ciphertext, iv });
+
+      const ts = Date.now();
+      if (!chatMessages[activeChat]) chatMessages[activeChat] = [];
+      chatMessages[activeChat].push({ from: myUsername, ...msgObj, timestamp: ts });
+      appendMessageEl({ from: myUsername, ...msgObj, timestamp: ts });
+      scrollToBottom();
+      renderContacts();
+    } catch (err) { console.error('Media send failed:', err); }
+  }
+
+  // ═══ TYPING INDICATORS (FIXED) ════════════════════════════════
   function onMessageInput() {
     sendBtn.disabled = !msgInput.value.trim();
     if (!activeChat) return;
@@ -362,9 +436,7 @@
     }
 
     clearTimeout(myTypingTimer);
-    myTypingTimer = setTimeout(() => {
-      emitStopTyping();
-    }, 2000);
+    myTypingTimer = setTimeout(() => { emitStopTyping(); }, 2000);
   }
 
   function emitStopTyping() {
@@ -377,31 +449,26 @@
 
   function showTyping(from) {
     typingLabel.textContent = `${from} is typing…`;
-    typingInd.hidden = false;
+    typingInd.classList.remove('hidden');
     scrollToBottom();
-
     clearTimeout(typingTimers[from]);
     typingTimers[from] = setTimeout(() => hideTyping(), 3000);
   }
 
   function hideTyping() {
-    typingInd.hidden = true;
+    typingInd.classList.add('hidden');
   }
 
   // ═══ KEY MANAGEMENT ════════════════════════════════════════════
   async function getSharedKey(username) {
     if (sharedKeys[username]) return sharedKeys[username];
-
-    // Get peer's public key
     const contact = contacts.find(c => c.username === username);
     let peerPubJwk = contact?.publicKey;
-
     if (!peerPubJwk) {
       const res = await emitAsync('get-public-key', { username });
       if (res.error) throw new Error(res.error);
       peerPubJwk = res.publicKey;
     }
-
     const peerPubKey = await VaultCrypto.importPublicKey(peerPubJwk);
     const shared = await VaultCrypto.deriveSharedKey(myKeyPair.privateKey, peerPubKey);
     sharedKeys[username] = shared;
@@ -409,42 +476,24 @@
   }
 
   // ═══ HELPERS ═══════════════════════════════════════════════════
-  function emitAsync(event, data) {
-    return new Promise((resolve) => {
-      socket.emit(event, data, (res) => resolve(res));
-    });
+  function emitAsync(ev, data) {
+    return new Promise(r => socket.emit(ev, data, r));
   }
-
-  function esc(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
-  }
-
-  function truncate(str, max) {
-    return str.length > max ? str.slice(0, max) + '…' : str;
-  }
-
-  function formatTime(ts) {
-    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
+  function formatTime(ts) { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
   function formatDate(ts) {
-    const d = new Date(ts);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-
+    const d = new Date(ts), today = new Date(), yday = new Date(today);
+    yday.setDate(today.getDate() - 1);
     if (d.toDateString() === today.toDateString()) return 'Today';
-    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    if (d.toDateString() === yday.toDateString()) return 'Yesterday';
     return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
   }
-
-  function showError(msg) {
-    loginError.textContent = msg;
-    loginError.hidden = false;
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
   }
-  function hideError() {
-    loginError.hidden = true;
-  }
+  function showError(msg) { loginError.textContent = msg; loginError.hidden = false; }
+  function hideError() { loginError.hidden = true; }
 })();

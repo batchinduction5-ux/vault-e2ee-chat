@@ -6,7 +6,7 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { maxHttpBufferSize: 10 * 1024 * 1024 });
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));

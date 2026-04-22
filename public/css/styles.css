@@ -336,6 +336,7 @@ input,button{font-family:inherit;font-size:inherit}
   padding:6px 22px 10px;font-size:13px;color:var(--text-muted);
   flex-shrink:0;
 }
+.typing-indicator.hidden{display:none !important}
 .typing-dots{display:flex;gap:3px}
 .typing-dots span{
   width:6px;height:6px;border-radius:50%;
@@ -384,6 +385,49 @@ input,button{font-family:inherit;font-size:inherit}
 }
 .send-btn:active:not(:disabled){transform:scale(.96)}
 .send-btn:disabled{opacity:.35;cursor:not-allowed}
+
+/* attachment button */
+.attach-btn{
+  width:40px;height:40px;border-radius:50%;border:none;
+  background:transparent;color:var(--text-muted);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:color var(--transition),background var(--transition);
+  flex-shrink:0;
+}
+.attach-btn:hover{color:var(--accent);background:var(--accent-glow)}
+#file-input{display:none}
+
+/* media messages */
+.msg-media{margin-top:6px;border-radius:8px;overflow:hidden;max-width:100%}
+.msg-media img,.msg-media video{
+  max-width:100%;max-height:300px;border-radius:8px;display:block;
+  cursor:pointer;transition:transform var(--transition);
+}
+.msg-media img:hover,.msg-media video:hover{transform:scale(1.02)}
+.msg-file{
+  display:flex;align-items:center;gap:10px;margin-top:6px;
+  padding:10px 14px;border-radius:8px;
+  background:rgba(255,255,255,.06);border:1px solid var(--border);
+  cursor:pointer;transition:background var(--transition);
+}
+.msg-file:hover{background:rgba(255,255,255,.1)}
+.msg-file-icon{font-size:22px;flex-shrink:0}
+.msg-file-info{min-width:0}
+.msg-file-name{
+  font-size:13px;font-weight:500;display:block;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.msg-file-size{font-size:11px;color:var(--text-muted);display:block}
+.file-preview-overlay{
+  position:fixed;inset:0;z-index:100;
+  background:rgba(0,0,0,.85);backdrop-filter:blur(8px);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;animation:fadeIn .2s ease-out;
+}
+.file-preview-overlay img,.file-preview-overlay video{
+  max-width:90vw;max-height:90vh;border-radius:8px;
+}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
 
 /* ── Key exchange overlay ─────────────────────────────────────────── */
 .key-exchange-overlay{
