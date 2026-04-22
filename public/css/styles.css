@@ -460,6 +460,98 @@ input,button{font-family:inherit;font-size:inherit}
 @keyframes spin{to{transform:rotate(360deg)}}
 .key-exchange-overlay span{font-size:13px;color:var(--text-dim)}
 
+/* ── Call Buttons (header) ────────────────────────────────────────── */
+.chat-header-actions{display:flex;align-items:center;gap:8px}
+.call-btn{
+  width:36px;height:36px;border-radius:50%;border:none;
+  background:rgba(255,255,255,.06);color:var(--text-dim);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:all var(--transition);
+}
+.call-btn:hover{background:var(--accent-glow);color:var(--accent)}
+
+/* ── Call Overlays ────────────────────────────────────────────────── */
+.call-overlay{
+  position:fixed;inset:0;z-index:200;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(6,10,20,.92);backdrop-filter:blur(16px);
+  animation:fadeIn .3s ease-out;
+}
+.call-overlay.hidden{display:none !important}
+
+/* incoming call card */
+.call-card{
+  text-align:center;padding:40px 48px;
+  background:var(--bg-glass);border:1px solid var(--border);
+  border-radius:var(--radius-lg);backdrop-filter:blur(24px);
+  box-shadow:var(--shadow);animation:fadeUp .4s ease-out;
+}
+.call-avatar{
+  width:80px;height:80px;border-radius:50%;margin:0 auto 16px;
+  background:linear-gradient(135deg,var(--accent-2),var(--accent));
+  display:flex;align-items:center;justify-content:center;
+  font-size:32px;font-weight:700;color:#fff;text-transform:uppercase;
+  animation:callPulse 2s ease-in-out infinite;
+}
+@keyframes callPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(167,139,250,.3)}
+  50%{box-shadow:0 0 0 20px rgba(167,139,250,0)}
+}
+.call-card h3{font-size:20px;font-weight:600;margin-bottom:4px}
+.call-card p{font-size:14px;color:var(--text-muted)}
+.call-e2ee{font-size:12px;color:var(--green);margin-top:8px}
+.call-actions{display:flex;gap:24px;justify-content:center;margin-top:24px}
+.call-action-btn{
+  width:56px;height:56px;border-radius:50%;border:none;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:transform var(--transition),box-shadow var(--transition);
+}
+.call-action-btn.accept{background:var(--green);color:#fff}
+.call-action-btn.accept:hover{transform:scale(1.1);box-shadow:0 0 20px var(--green-glow)}
+.call-action-btn.reject{background:var(--red);color:#fff}
+.call-action-btn.reject:hover{transform:scale(1.1);box-shadow:0 0 20px rgba(248,113,113,.4)}
+
+/* active call screen */
+.call-screen{
+  width:100%;height:100%;position:relative;
+  display:flex;align-items:center;justify-content:center;
+  background:#000;
+}
+#remote-video{
+  width:100%;height:100%;object-fit:cover;
+  background:#111;
+}
+#local-video{
+  position:absolute;bottom:100px;right:24px;
+  width:180px;height:135px;border-radius:var(--radius);
+  object-fit:cover;border:2px solid var(--border);
+  box-shadow:var(--shadow);z-index:2;
+}
+.call-info{
+  position:absolute;top:24px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:12px;z-index:2;
+  background:rgba(0,0,0,.5);backdrop-filter:blur(8px);
+  padding:8px 20px;border-radius:20px;
+}
+.call-info span{font-size:14px;font-weight:500}
+#call-timer{color:var(--text-dim);font-variant-numeric:tabular-nums}
+.call-e2ee-badge{font-size:12px;color:var(--green)}
+.call-controls{
+  position:absolute;bottom:32px;left:50%;transform:translateX(-50%);
+  display:flex;gap:16px;z-index:2;
+}
+.call-ctrl-btn{
+  width:50px;height:50px;border-radius:50%;border:none;
+  background:rgba(255,255,255,.12);color:#fff;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(8px);
+  transition:all var(--transition);
+}
+.call-ctrl-btn:hover{background:rgba(255,255,255,.22)}
+.call-ctrl-btn.active{background:var(--accent);color:#fff}
+.call-ctrl-btn.hangup{background:var(--red)}
+.call-ctrl-btn.hangup:hover{background:#ef4444;transform:scale(1.1)}
+
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media(max-width:700px){
   #sidebar{width:72px;min-width:72px}

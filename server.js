@@ -142,6 +142,42 @@ io.on('connection', (socket) => {
     const dest = userSockets.get(to);
     if (dest) io.to(dest).emit('user-stop-typing', { from });
   });
+  // ── WebRTC Call Signaling ──────────────────────────────────────────
+  socket.on('call-offer', ({ to, offer, callType }) => {
+    const from = onlineUsers.get(socket.id);
+    if (!from) return;
+    const dest = userSockets.get(to);
+    if (dest) io.to(dest).emit('call-offer', { from, offer, callType });
+    else socket.emit('call-rejected', { from: to, reason: 'User is offline' });
+  });
+
+  socket.on('call-answer', ({ to, answer }) => {
+    const from = onlineUsers.get(socket.id);
+    if (!from) return;
+    const dest = userSockets.get(to);
+    if (dest) io.to(dest).emit('call-answer', { from, answer });
+  });
+
+  socket.on('ice-candidate', ({ to, candidate }) => {
+    const from = onlineUsers.get(socket.id);
+    if (!from) return;
+    const dest = userSockets.get(to);
+    if (dest) io.to(dest).emit('ice-candidate', { from, candidate });
+  });
+
+  socket.on('call-reject', ({ to }) => {
+    const from = onlineUsers.get(socket.id);
+    if (!from) return;
+    const dest = userSockets.get(to);
+    if (dest) io.to(dest).emit('call-rejected', { from });
+  });
+
+  socket.on('call-end', ({ to }) => {
+    const from = onlineUsers.get(socket.id);
+    if (!from) return;
+    const dest = userSockets.get(to);
+    if (dest) io.to(dest).emit('call-ended', { from });
+  });
 
   // ── Disconnect ────────────────────────────────────────────────────
   socket.on('disconnect', () => {

@@ -508,6 +508,7 @@
 
   // ═══ LOGOUT ════════════════════════════════════════════════════
   window._vaultLogout = function () {
+    endCall();
     localStorage.removeItem('vault_username');
     if (socket) { socket.disconnect(); socket = null; }
     myUsername = null; myKeyPair = null; myPublicJwk = null;
@@ -519,4 +520,217 @@
     loginBtn.querySelector('.btn-text').textContent = 'Connect Securely';
     loginBtn.disabled = true;
   };
+
+  // ═══ WEBRTC VOICE/VIDEO CALLS (E2EE via DTLS-SRTP) ════════════
+  const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+
+  let peerConnection = null;
+  let localStream    = null;
+  let callPeer       = null;
+  let callType       = null;   // 'voice' | 'video'
+  let callTimerInt   = null;
+  let callSeconds    = 0;
+  let isMuted        = false;
+  let isCamOff       = false;
+  let pendingOffer   = null;
+
+  const incomingEl   = $('#incoming-call');
+  const activeCallEl = $('#active-call');
+  const remoteVideo  = $('#remote-video');
+  const localVideo   = $('#local-video');
+  const voiceCallBtn = $('#voice-call-btn');
+  const videoCallBtn = $('#video-call-btn');
+  const acceptCallBtn= $('#accept-call');
+  const rejectCallBtn= $('#reject-call');
+  const endCallBtn   = $('#end-call');
+  const toggleMuteBtn= $('#toggle-mute');
+  const toggleCamBtn = $('#toggle-camera');
+  const callTimerEl  = $('#call-timer');
+  const callPeerName = $('#call-peer-name');
+
+  voiceCallBtn.addEventListener('click', () => startCall('voice'));
+  videoCallBtn.addEventListener('click', () => startCall('video'));
+  acceptCallBtn.addEventListener('click', acceptCall);
+  rejectCallBtn.addEventListener('click', rejectCall);
+  endCallBtn.addEventListener('click', () => { socket.emit('call-end', { to: callPeer }); endCall(); });
+  toggleMuteBtn.addEventListener('click', toggleMute);
+  toggleCamBtn.addEventListener('click', toggleCamera);
+
+  // ── Start outgoing call ──────────────────────────────────────────
+  async function startCall(type) {
+    if (!activeChat || peerConnection) return;
+    const c = contacts.find(u => u.username === activeChat);
+    if (!c?.online) return alert('User is offline');
+
+    callPeer = activeChat;
+    callType = type;
+
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: type === 'video',
+      });
+    } catch (err) {
+      alert('Could not access microphone/camera: ' + err.message);
+      return;
+    }
+
+    setupPeerConnection();
+    localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    socket.emit('call-offer', { to: callPeer, offer, callType: type });
+    showActiveCall();
+  }
+
+  // ── Receive incoming call ────────────────────────────────────────
+  function onCallOffer(data) {
+    if (peerConnection) {
+      socket.emit('call-reject', { to: data.from });
+      return;
+    }
+    pendingOffer = data;
+    callPeer = data.from;
+    callType = data.callType;
+
+    $('#incoming-avatar').textContent = data.from[0].toUpperCase();
+    $('#incoming-name').textContent = data.from;
+    $('#incoming-type').textContent = `Incoming ${data.callType} call…`;
+    incomingEl.classList.remove('hidden');
+  }
+
+  async function acceptCall() {
+    incomingEl.classList.add('hidden');
+    if (!pendingOffer) return;
+
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: callType === 'video',
+      });
+    } catch (err) {
+      alert('Could not access microphone/camera: ' + err.message);
+      socket.emit('call-reject', { to: callPeer });
+      pendingOffer = null;
+      return;
+    }
+
+    setupPeerConnection();
+    localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(pendingOffer.offer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    socket.emit('call-answer', { to: callPeer, answer });
+    pendingOffer = null;
+    showActiveCall();
+  }
+
+  function rejectCall() {
+    incomingEl.classList.add('hidden');
+    if (callPeer) socket.emit('call-reject', { to: callPeer });
+    pendingOffer = null;
+    callPeer = null;
+  }
+
+  // ── Peer connection setup ────────────────────────────────────────
+  function setupPeerConnection() {
+    peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+    peerConnection.onicecandidate = (e) => {
+      if (e.candidate) socket.emit('ice-candidate', { to: callPeer, candidate: e.candidate });
+    };
+
+    peerConnection.ontrack = (e) => {
+      remoteVideo.srcObject = e.streams[0];
+    };
+
+    peerConnection.onconnectionstatechange = () => {
+      if (['disconnected', 'failed', 'closed'].includes(peerConnection?.connectionState)) {
+        endCall();
+      }
+    };
+  }
+
+  // ── Show/hide call UI ────────────────────────────────────────────
+  function showActiveCall() {
+    callPeerName.textContent = callPeer;
+    localVideo.srcObject = localStream;
+    localVideo.style.display = callType === 'video' ? 'block' : 'none';
+    activeCallEl.classList.remove('hidden');
+    callSeconds = 0;
+    callTimerEl.textContent = '00:00';
+    callTimerInt = setInterval(() => {
+      callSeconds++;
+      const m = String(Math.floor(callSeconds / 60)).padStart(2, '0');
+      const s = String(callSeconds % 60).padStart(2, '0');
+      callTimerEl.textContent = `${m}:${s}`;
+    }, 1000);
+    isMuted = false; isCamOff = false;
+    toggleMuteBtn.classList.remove('active');
+    toggleCamBtn.classList.remove('active');
+  }
+
+  function endCall() {
+    activeCallEl.classList.add('hidden');
+    incomingEl.classList.add('hidden');
+    clearInterval(callTimerInt);
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    if (peerConnection) { peerConnection.close(); peerConnection = null; }
+    remoteVideo.srcObject = null;
+    localVideo.srcObject = null;
+    callPeer = null; pendingOffer = null;
+  }
+
+  // ── Call controls ────────────────────────────────────────────────
+  function toggleMute() {
+    if (!localStream) return;
+    isMuted = !isMuted;
+    localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+    toggleMuteBtn.classList.toggle('active', isMuted);
+  }
+
+  function toggleCamera() {
+    if (!localStream) return;
+    isCamOff = !isCamOff;
+    localStream.getVideoTracks().forEach(t => t.enabled = !isCamOff);
+    toggleCamBtn.classList.toggle('active', isCamOff);
+  }
+
+  // ── Bind call socket events (called inside bindSocketEvents) ────
+  const _origBind = bindSocketEvents;
+  bindSocketEvents = function () {
+    _origBind();
+
+    socket.on('call-offer', onCallOffer);
+
+    socket.on('call-answer', async ({ from, answer }) => {
+      if (peerConnection) {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      }
+    });
+
+    socket.on('ice-candidate', async ({ from, candidate }) => {
+      if (peerConnection && candidate) {
+        try { await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)); }
+        catch (e) { console.warn('ICE error:', e); }
+      }
+    });
+
+    socket.on('call-rejected', ({ from, reason }) => {
+      endCall();
+      alert(reason || `${from} declined the call.`);
+    });
+
+    socket.on('call-ended', ({ from }) => {
+      endCall();
+    });
+  };
+
 })();
