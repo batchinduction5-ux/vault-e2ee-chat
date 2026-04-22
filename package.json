@@ -1,0 +1,14 @@
+{
+  "name": "vault-e2ee-chat",
+  "version": "1.0.0",
+  "description": "256-bit End-to-End Encrypted Messaging App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "socket.io": "^4.7.5"
+  }
+}
